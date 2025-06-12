@@ -16,6 +16,31 @@ class MCPClient:
         self.exit_stack = AsyncExitStack()
         self.anthropic = Anthropic()
 
+
+
+    async def connect_from_config(self, config: dict):
+        """Connect to multiple MCP servers from a configuration dictionary."""
+        servers = config.get("mcpServers", {})
+        for name, server in servers.items():
+            command = server.get("command")
+            args = server.get("args", [])
+
+            if not command:
+                raise ValueError(f"Missing 'command' for server '{name}'")
+
+            server_params = StdioServerParameters(command=command, args=args)
+            stdio_transport = await self.exit_stack.enter_async_context(stdio_client(server_params))
+            stdio, write = stdio_transport
+            session = await self.exit_stack.enter_async_context(ClientSession(stdio, write))
+            await session.initialize()
+
+            self.sessions.append(session)
+            response = await session.list_tools()
+            self.all_tools.extend(response.tools)
+
+            print(f"\nConnected to '{name}' with tools:", [tool.name for tool in response.tools])
+            
+            
     async def connect_to_server(self, server_script_path: str):
         """Connect to an MCP server and store session/tools."""
         is_python = server_script_path.endswith('.py')

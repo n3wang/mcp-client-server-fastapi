@@ -1,0 +1,16 @@
+{
+  "mcpServers": {
+    "weather": {
+      "command": "python",
+      "args": ["servers/weather.py"]
+    },
+    "calculator": {
+      "command": "python",
+      "args": ["servers/calculator.py"]
+    },
+    "sqlite": {
+      "command": "uvx",
+      "args": ["mcp-server-sqlite", "--db-path", "/tmp/mcp.db"]
+    }
+  }
+}

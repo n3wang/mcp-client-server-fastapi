@@ -1,12 +1,12 @@
 from fastapi import FastAPI, Body
 from pydantic import BaseModel
-from typing import List, Optional, Literal, Dict
+from typing import List, Optional, Literal
 from dotenv import load_dotenv
-from typing import List
 from client import MCPClient
-
+import json
 
 load_dotenv()
+
 client = MCPClient()
 app = FastAPI()
 
@@ -17,10 +17,14 @@ class Message(BaseModel):
 class ChatRequest(BaseModel):
     messages: List[Message]
 
+def load_config_from_file(path: str = "config.json") -> dict:
+    with open(path, "r") as f:
+        return json.load(f)
+
 @app.on_event("startup")
 async def startup_event():
-    await client.connect_to_server('servers/weather.py')
-    await client.connect_to_server('servers/calculator.py')
+    config = load_config_from_file()  # loads 'config.json' by default
+    await client.connect_from_config(config)
 
 @app.on_event("shutdown")
 async def shutdown_event():
@@ -32,6 +36,5 @@ async def health():
 
 @app.post('/chat')
 async def chat(request: ChatRequest = Body(...)):
-    messages = request.messages
-    response = await client.chat(messages)
+    response = await client.chat(request.messages)
     return {"response": response}
