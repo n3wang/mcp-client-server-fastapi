@@ -1,29 +1,23 @@
 import asyncio
-from typing import Optional
+import sys
+from typing import Optional, List
 from contextlib import AsyncExitStack
-
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
-
 from anthropic import Anthropic
 from dotenv import load_dotenv
 
-load_dotenv()  # load environment variables from .env
+load_dotenv()
 
 class MCPClient:
     def __init__(self):
-        # Initialize session and client objects
-        self.session: Optional[ClientSession] = None
+        self.sessions: List[ClientSession] = []
+        self.all_tools = []
         self.exit_stack = AsyncExitStack()
         self.anthropic = Anthropic()
-    # methods will go here
 
     async def connect_to_server(self, server_script_path: str):
-        """Connect to an MCP server
-
-        Args:
-            server_script_path: Path to the server script (.py or .js)
-        """
+        """Connect to an MCP server and store session/tools."""
         is_python = server_script_path.endswith('.py')
         is_js = server_script_path.endswith('.js')
         if not (is_python or is_js):
@@ -37,27 +31,35 @@ class MCPClient:
         )
 
         stdio_transport = await self.exit_stack.enter_async_context(stdio_client(server_params))
-        self.stdio, self.write = stdio_transport
-        self.session = await self.exit_stack.enter_async_context(ClientSession(self.stdio, self.write))
+        stdio, write = stdio_transport
+        session = await self.exit_stack.enter_async_context(ClientSession(stdio, write))
+        await session.initialize()
 
-        await self.session.initialize()
+        self.sessions.append(session)
 
-        # List available tools
-        response = await self.session.list_tools()
-        tools = response.tools
-        print("\Modded Client Connected to server with tools:", [tool.name for tool in tools])
+        response = await session.list_tools()
+        self.all_tools.extend(response.tools)
+
+        print("\nModded Client Connected to server with tools:", [tool.name for tool in response.tools])
+
+    async def call_tool_from_any_session(self, tool_name: str, tool_args: dict):
+        """Try calling tool on the first session that has it."""
+        for session in self.sessions:
+            tools = await session.list_tools()
+            for tool in tools.tools:
+                if tool.name == tool_name:
+                    return await session.call_tool(tool_name, tool_args)
+        raise RuntimeError(f"Tool '{tool_name}' not found in any session.")
 
     async def process_query(self, messages) -> str:
-        """Process a query using Claude and available tools"""
-
-        response = await self.session.list_tools()
+        """Process a query using Claude and available tools."""
         available_tools = [{
             "name": tool.name,
             "description": tool.description,
             "input_schema": tool.inputSchema
-        } for tool in response.tools]
+        } for tool in self.all_tools]
 
-        # Initial Claude API call
+        # Initial Claude call
         response = self.anthropic.messages.create(
             model="claude-3-5-sonnet-20241022",
             max_tokens=1000,
@@ -65,10 +67,9 @@ class MCPClient:
             tools=available_tools
         )
 
-        # Process response and handle tool calls
         final_text = []
-
         assistant_message_content = []
+
         for content in response.content:
             if content.type == 'text':
                 final_text.append(content.text)
@@ -77,10 +78,10 @@ class MCPClient:
                 tool_name = content.name
                 tool_args = content.input
 
-                # Execute tool call
-                result = await self.session.call_tool(tool_name, tool_args)
-                final_text.append(f"[Calling tool {tool_name} with args {tool_args}]")
+                # Call tool from appropriate session
+                result = await self.call_tool_from_any_session(tool_name, tool_args)
 
+                final_text.append(f"[Calling tool {tool_name} with args {tool_args}]")
                 assistant_message_content.append(content)
                 messages.append({
                     "role": "assistant",
@@ -97,7 +98,7 @@ class MCPClient:
                     ]
                 })
 
-                # Get next response from Claude
+                # Recursive Claude follow-up with tool result
                 response = self.anthropic.messages.create(
                     model="claude-3-5-sonnet-20241022",
                     max_tokens=1000,
@@ -106,34 +107,43 @@ class MCPClient:
                 )
 
                 final_text.append(response.content[0].text)
-        
+                break  # Optional: prevent multiple tool uses at once
+
         return "\n".join(final_text)
 
     async def chat(self, messages):
-        """Run an interactive chat loop"""
+        """Run a single interaction with Claude and tools."""
         print("\nMCP Client Started!")
-        try:            
+        try:
             return await self.process_query(messages)
         except Exception as e:
             print(f"\nError: {str(e)}")
 
     async def cleanup(self):
-        """Clean up resources"""
+        """Clean up all open sessions."""
         await self.exit_stack.aclose()
 
+# === CLI runner ===
 
 async def main():
     if len(sys.argv) < 2:
-        print("Usage: python client.py <path_to_server_script>")
+        print("Usage: python client.py <path_to_server_script> [<path_to_server_script2> ...]")
         sys.exit(1)
 
     client = MCPClient()
     try:
-        await client.connect_to_server(sys.argv[1])
-        await client.chat_loop()
+        for path in sys.argv[1:]:
+            await client.connect_to_server(path)
+
+        # Example message payload (replace or modify this for testing)
+        user_messages = [
+            {"role": "user", "content": "What's the time? Can you also read from a file?"}
+        ]
+        result = await client.chat(user_messages)
+        print("\nResponse:\n", result)
+
     finally:
         await client.cleanup()
 
 if __name__ == "__main__":
-    import sys
     asyncio.run(main())

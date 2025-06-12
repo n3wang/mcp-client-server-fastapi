@@ -24,7 +24,3 @@ ANTHROPIC_API_KEY=...
 ```
 
 
-
-### How toa dd more endpoints
-
-
