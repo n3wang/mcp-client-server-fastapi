@@ -84,22 +84,28 @@ class MCPClient:
             "input_schema": tool.inputSchema
         } for tool in self.all_tools]
 
-        # Initial Claude call
+        # Uses claude-3-5-sonnet model for this. This should be something that we can replace correct?
         response = self.anthropic.messages.create(
             model="claude-3-5-sonnet-20241022",
             max_tokens=1000,
             messages=messages,
             tools=available_tools
         )
+        print('response called in process query', response, messages)
+        print('=====')
+        print(response)
 
         final_text = []
         assistant_message_content = []
 
         for content in response.content:
             if content.type == 'text':
+                print('=============== TEXT ================')
+                print('text', content.text)
                 final_text.append(content.text)
                 assistant_message_content.append(content)
             elif content.type == 'tool_use':
+                print('================TOOL USE===============')
                 tool_name = content.name
                 tool_args = content.input
 
@@ -130,8 +136,11 @@ class MCPClient:
                     messages=messages,
                     tools=available_tools
                 )
+                print('response called inside tool use with', response, messages)
 
                 final_text.append(response.content[0].text)
+                print('=====')
+                print(response)
                 break  # Optional: prevent multiple tool uses at once
 
         return "\n".join(final_text)
